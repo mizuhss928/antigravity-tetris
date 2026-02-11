@@ -23,6 +23,9 @@ export class GameScene implements Scene {
     private isPaused: boolean = false;
     private isGameOver: boolean = false;
 
+    // ポーズメニュー状態
+    private pauseMenuSelection: number = 0; // 0: 再開, 1: 終了
+
     // タイミング管理
     private dropTimer: number = 0;
     private dropInterval: number = 1.0; // 落下間隔（秒）
@@ -56,28 +59,30 @@ export class GameScene implements Scene {
         }
 
         if (input.isPressed(Action.Pause)) {
-            // シンプルなポーズ切り替え、またはタイトルに戻る
-            // 今のところ、「ポーズメニュー」の代わりとしてタイトルに戻る
-            this.sceneManager.changeScene(new TitleScene(this.sceneManager));
+            this.isPaused = !this.isPaused;
+            this.pauseMenuSelection = 0; // ポーズ時に選択をリセット
             return;
         }
 
-        if (this.isPaused) return;
+        if (this.isPaused) {
+            this.handlePauseInput(input);
+            return;
+        }
 
         // Use moveTimer to suppress lint error for now (or implement DAS later)
         // if (this.moveTimer > 0) this.moveTimer -= deltaTime;
 
-        // Input Handling
+        // 入力処理
         this.handleInput(deltaTime, input);
 
-        // Gravity
+        // 重力処理
         this.dropTimer += deltaTime;
         if (this.dropTimer >= this.dropInterval) {
             this.dropTimer = 0;
             this.moveDown();
         }
 
-        // Lock Timer logic could be more complex (reset on move), simplified here
+        // 接地固定（ロック）タイマーロジックはもっと複雑になりうる（移動でリセットなど）、ここでは簡略化
         if (this.currentTetromino && !this.board.isValidPosition(this.currentTetromino, 0, 1)) {
             this.lockTimer += deltaTime;
             if (this.lockTimer >= this.lockDelay) {
@@ -88,14 +93,32 @@ export class GameScene implements Scene {
         }
     }
 
+    private handlePauseInput(input: InputManager): void {
+        if (input.isPressed(Action.HardDrop)) { // 上 (矢印上)
+            this.pauseMenuSelection = 0; // 再開
+        } else if (input.isPressed(Action.SoftDrop)) { // 下 (矢印下)
+            this.pauseMenuSelection = 1; // 終了
+        }
+
+        if (input.isPressed(Action.RotateRight) || input.isPressed(Action.RotateLeft)) { // 決定 (Enter/Space/z/x)
+            if (this.pauseMenuSelection === 0) {
+                // 再開
+                this.isPaused = false;
+            } else if (this.pauseMenuSelection === 1) {
+                // タイトルへ終了
+                this.sceneManager.changeScene(new TitleScene(this.sceneManager));
+            }
+        }
+    }
+
     private handleInput(_deltaTime: number, input: InputManager): void {
         if (!this.currentTetromino) return;
 
-        // Horizontal Movement
+        // 水平移動
         if (input.isPressed(Action.MoveLeft)) {
             if (this.board.isValidPosition(this.currentTetromino, -1, 0)) {
                 this.currentTetromino.x--;
-                this.lockTimer = 0; // Reset lock timer on move
+                this.lockTimer = 0; // 移動でロックタイマーをリセット
             }
         } else if (input.isPressed(Action.MoveRight)) {
             if (this.board.isValidPosition(this.currentTetromino, 1, 0)) {
@@ -104,48 +127,48 @@ export class GameScene implements Scene {
             }
         }
 
-        // Continuous movement handling (DAS) omitted for brevity but recommended for feel
+        // 連続移動処理 (DAS) は簡潔さのために省略（操作感向上のため推奨）
 
-        // Rotation
+        // 回転
         if (input.isPressed(Action.RotateLeft)) {
             this.currentTetromino.rotate('left');
             if (!this.board.isValidPosition(this.currentTetromino)) {
-                // Wall kick (basic implementation)
+                // 壁蹴り (基本的な実装)
                 if (this.board.isValidPosition(this.currentTetromino, 1, 0)) this.currentTetromino.x++;
                 else if (this.board.isValidPosition(this.currentTetromino, -1, 0)) this.currentTetromino.x--;
-                else this.currentTetromino.rotate('right'); // Revert
+                else this.currentTetromino.rotate('right'); // 元に戻す
             } else {
                 this.lockTimer = 0;
             }
         } else if (input.isPressed(Action.RotateRight)) {
             this.currentTetromino.rotate('right');
             if (!this.board.isValidPosition(this.currentTetromino)) {
-                // Wall kick
+                // 壁蹴り
                 if (this.board.isValidPosition(this.currentTetromino, 1, 0)) this.currentTetromino.x++;
                 else if (this.board.isValidPosition(this.currentTetromino, -1, 0)) this.currentTetromino.x--;
-                else this.currentTetromino.rotate('left'); // Revert
+                else this.currentTetromino.rotate('left'); // 元に戻す
             } else {
                 this.lockTimer = 0;
             }
         }
 
-        // Soft Drop
+        // ソフトドロップ
         if (input.isDown(Action.SoftDrop)) {
-            this.dropInterval = 0.05; // Fixed fast speed for soft drop
+            this.dropInterval = 0.05; // 固定の高速落下速度
         } else {
-            this.updateLevel(); // Reset speed
+            this.updateLevel(); // 速度リセット
         }
 
-        // Hard Drop
+        // ハードドロップ
         if (input.isPressed(Action.HardDrop)) {
             while (this.board.isValidPosition(this.currentTetromino, 0, 1)) {
                 this.currentTetromino.y++;
-                this.score += 2; // Hard drop points
+                this.score += 2; // ハードドロップ加点
             }
             this.lock();
         }
 
-        // Hold
+        // ホールド
         if (input.isPressed(Action.Hold)) {
             this.hold();
         }
@@ -156,18 +179,18 @@ export class GameScene implements Scene {
         if (this.board.isValidPosition(this.currentTetromino, 0, 1)) {
             this.currentTetromino.y++;
         } else {
-            // Landed, let lock timer handle it or lock immediately if hard drop
-            // Actually, if we try to move down and can't, checking lock here helps responsiveness
+            // 接地した場合、ロックタイマーに任せるか、ハードドロップなら即座にロック
+            // 実際には、下降しようとしてできない場合、ここでロックチェックすると反応が良い
         }
     }
 
     private lock(): void {
         if (!this.currentTetromino) return;
 
-        // Check for Lock Out (Game Over if locked completely above visible board)
-        // Or if any part is cut off. Standard rule: if any part of the locked piece is above the visible playfield (y < 0).
-        // However, usually partial lockout is allowed in some versions, but fully above is definitely over.
-        // Let's implement strict top-out: if any block is locked at y < 0, it's game over.
+        // ロックアウト判定 (完全に見えているボードより上でロックされたらゲームオーバー)
+        // または一部が切れている場合。標準ルール: 固定されたピースの一部でも可視フィールドより上 (y < 0) にあればゲームオーバー。
+        // 部分的なロックアウトはバージョンによって許容されることもあるが、完全に上の場合は確実にアウト。
+        // ここでは厳密なトップアウトを実装: どのブロックでも y < 0 でロックされたらゲームオーバー。
         let isLockOut = false;
         for (let y = 0; y < this.currentTetromino.matrix.length; y++) {
             for (let x = 0; x < this.currentTetromino.matrix[y].length; x++) {
@@ -198,7 +221,7 @@ export class GameScene implements Scene {
         this.canHold = true;
         this.lockTimer = 0;
 
-        // Check spawn collision (Game Over)
+        // 出現衝突判定 (ゲームオーバー)
         if (!this.board.isValidPosition(this.currentTetromino)) {
             this.isGameOver = true;
             this.sceneManager.changeScene(new GameOverScene(this.sceneManager, this.score));
@@ -216,13 +239,13 @@ export class GameScene implements Scene {
             this.currentTetromino = this.holdTetromino;
             this.holdTetromino = temp;
 
-            // Reset position of swapped tetromino
+            // 交換したテトリミノの位置をリセット
             this.currentTetromino.x = Math.floor((this.board.width - this.currentTetromino.matrix[0].length) / 2);
             this.currentTetromino.y = -2;
 
-            // Check collision after swap just in case
+            // 交換後の衝突チェック（念のため）
             if (!this.board.isValidPosition(this.currentTetromino)) {
-                // Should technically not happen often unless stacked high
+                // 高く積み上がっていない限り技術的には起きないはず
                 this.isGameOver = true;
                 this.sceneManager.changeScene(new GameOverScene(this.sceneManager, this.score));
             }
@@ -258,13 +281,13 @@ export class GameScene implements Scene {
         const ctx = renderer.getContext();
 
         // ボードのグリッド/背景を描画
-        ctx.fillStyle = 'rgba(0, 10, 20, 0.8)'; // Darker transparency
+        ctx.fillStyle = 'rgba(0, 10, 20, 0.8)'; // 暗い半透明
         ctx.fillRect(offsetX, offsetY, this.board.width * blockSize, this.board.height * blockSize);
 
-        ctx.strokeStyle = 'rgba(0, 243, 255, 0.2)'; // Faint neon cyan grid
+        ctx.strokeStyle = 'rgba(0, 243, 255, 0.2)'; // 薄いネオンシアンのグリッド
         ctx.lineWidth = 1;
 
-        // Grid lines
+        // グリッド線
         for (let x = 0; x <= this.board.width; x++) {
             ctx.beginPath();
             ctx.moveTo(offsetX + x * blockSize, offsetY);
@@ -278,12 +301,12 @@ export class GameScene implements Scene {
             ctx.stroke();
         }
 
-        ctx.strokeStyle = '#00f3ff'; // Outer border neon
+        ctx.strokeStyle = '#00f3ff'; // 外枠のネオン
         ctx.lineWidth = 2;
         ctx.shadowColor = '#00f3ff';
         ctx.shadowBlur = 20;
         ctx.strokeRect(offsetX, offsetY, this.board.width * blockSize, this.board.height * blockSize);
-        ctx.shadowBlur = 0; // Reset
+        ctx.shadowBlur = 0; // リセット
         ctx.lineWidth = 1;
 
         // 固定されたブロックを描画
@@ -303,8 +326,8 @@ export class GameScene implements Scene {
                 ghostY++;
             }
 
-            ctx.globalAlpha = 0.2; // Very faint
-            this.drawTetromino(ctx, this.currentTetromino, offsetX, offsetY, blockSize, ghostY, true); // true for outline only
+            ctx.globalAlpha = 0.2; // 非常に薄く
+            this.drawTetromino(ctx, this.currentTetromino, offsetX, offsetY, blockSize, ghostY, true); // true で枠線のみ
             ctx.globalAlpha = 1.0;
 
             // 操作中のテトリミノを描画
@@ -327,11 +350,11 @@ export class GameScene implements Scene {
 
         // 次のミノ
         renderer.drawText('ネクスト', 650, 100, 20, '#aaaaaa', 'left');
-        // Preview Next
+        // プレビュー表示
         const nextPieces = this.bag.peek(3);
         nextPieces.forEach((type, index) => {
             const tempTetro = new Tetromino(type);
-            // Basic preview drawing at fixed positions
+            // 固定位置での基本的なプレビュー描画
             const previewX = 650;
             const previewY = 130 + index * 80;
             this.drawPreviewTetromino(ctx, tempTetro, previewX, previewY, 20);
@@ -344,6 +367,36 @@ export class GameScene implements Scene {
             const previewY = 430;
             this.drawPreviewTetromino(ctx, this.holdTetromino, previewX, previewY, 20);
         }
+
+        if (this.isPaused) {
+            this.renderPauseMenu(renderer);
+        }
+    }
+
+    private renderPauseMenu(renderer: Renderer): void {
+        const ctx = renderer.getContext();
+        const width = renderer.getWidth();
+        const height = renderer.getHeight();
+
+        // オーバーレイ
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillRect(0, 0, width, height);
+
+        // タイトル
+        renderer.drawText('PAUSED', width / 2, height / 3, 50, 'white', 'center');
+
+        // メニューオプション
+        const options = ['再開 (Resume)', '終了 (Quit)'];
+        for (let i = 0; i < options.length; i++) {
+            const color = (i === this.pauseMenuSelection) ? '#00f3ff' : '#aaaaaa';
+            const size = (i === this.pauseMenuSelection) ? 35 : 30;
+            renderer.drawText(options[i], width / 2, height / 2 + i * 50, size, color, 'center');
+
+            if (i === this.pauseMenuSelection) {
+                // カーソル矢印またはハイライトを描画
+                renderer.drawText('>', width / 2 - 150, height / 2 + i * 50, size, color, 'right');
+            }
+        }
     }
 
     private drawTetromino(ctx: CanvasRenderingContext2D, tetromino: Tetromino, offsetX: number, offsetY: number, blockSize: number, overrideY?: number, outlineOnly: boolean = false): void {
@@ -352,7 +405,7 @@ export class GameScene implements Scene {
         for (let y = 0; y < tetromino.matrix.length; y++) {
             for (let x = 0; x < tetromino.matrix[y].length; x++) {
                 if (tetromino.matrix[y][x] !== 0) {
-                    // Check if visible (y >= 0)
+                    // 可視(y >= 0)かどうかチェック
                     if (drawY + y >= 0) {
                         this.drawBlock(ctx, offsetX + (tetromino.x + x) * blockSize, offsetY + (drawY + y) * blockSize, blockSize, tetromino.color, outlineOnly);
                     }
@@ -372,35 +425,35 @@ export class GameScene implements Scene {
     }
 
     private drawBlock(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color: string, outlineOnly: boolean = false): void {
-        const padding = 2; // Gap between blocks
+        const padding = 2; // ブロック間の隙間
         const rectSize = size - padding * 2;
         const rectX = x + padding;
         const rectY = y + padding;
 
         ctx.shadowColor = color;
-        ctx.shadowBlur = 15; // Neon glow
+        ctx.shadowBlur = 15; // ネオンの輝き
 
         if (outlineOnly) {
             ctx.strokeStyle = color;
             ctx.lineWidth = 1.5;
             ctx.strokeRect(rectX, rectY, rectSize, rectSize);
         } else {
-            // Inner Fill (Transparent)
+            // 内部の塗りつぶし（透明）
             ctx.fillStyle = color;
             ctx.globalAlpha = 0.5;
             ctx.fillRect(rectX, rectY, rectSize, rectSize);
             ctx.globalAlpha = 1.0;
 
-            // Bright Core/Border
+            // 明るいコア/境界線
             ctx.strokeStyle = color;
             ctx.lineWidth = 2;
             ctx.strokeRect(rectX, rectY, rectSize, rectSize);
 
-            // Highlight (Glossy look)
+            // ハイライト（光沢感）
             ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
             ctx.fillRect(rectX, rectY, rectSize, size * 0.3);
         }
 
-        ctx.shadowBlur = 0; // Reset
+        ctx.shadowBlur = 0; // リセット
     }
 }
